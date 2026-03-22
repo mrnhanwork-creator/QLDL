@@ -553,35 +553,49 @@ tr:hover td{background:#fafbff}
 
 <script>
 // ── GOOGLE SHEETS BACKEND ──
-const GAS_URL='https://script.google.com/macros/s/AKfycbz5lVvR5VZzyWA1swpK18AKTaWKeo15JBsS64L8knTJi3ba9eUqGcoMzraSp10JdIJ8ZQ/exec';
-async function gasGet(sheet){
-  try{
-    const r=await fetch(`${GAS_URL}?sheet=${encodeURIComponent(sheet)}`,{redirect:'follow'});
-    const text=await r.text();
-    try{
-      const j=JSON.parse(text);
-      return j.ok?j.data:[];
-    }catch(pe){
-      console.error('gasGet parse error sheet='+sheet,text.slice(0,300));
-      return[];
-    }
-  }catch(e){
-    console.error('gasGet fetch error:',e);
-    return[];
-  }
+const GAS_URL='https://script.google.com/macros/s/AKfycbx2i4JFdo4VSmt00dE9TDKqYt_z53uXgZgJQ-euBVkXMdf3BnqsBLe64T46DggBF5rQ1w/exec';
+
+// JSONP GET — vượt CORS
+function gasGet(sheet){
+  return new Promise((resolve)=>{
+    const cb='cb_'+Date.now()+'_'+Math.random().toString(36).slice(2);
+    const script=document.createElement('script');
+    const timer=setTimeout(()=>{
+      delete window[cb];script.remove();
+      console.warn('gasGet timeout:',sheet);resolve([]);
+    },10000);
+    window[cb]=(data)=>{
+      clearTimeout(timer);delete window[cb];script.remove();
+      resolve(data&&data.ok?data.data:[]);
+    };
+    script.src=`${GAS_URL}?sheet=${encodeURIComponent(sheet)}&callback=${cb}`;
+    script.onerror=()=>{clearTimeout(timer);delete window[cb];script.remove();resolve([]);};
+    document.head.appendChild(script);
+  });
 }
+
+// POST vẫn dùng fetch với no-cors (fire & forget)
 async function gasSave(sheet,data){
   try{
+    // Thử fetch thường trước
     const r=await fetch(GAS_URL,{
       method:'POST',
-      redirect:'follow',
       headers:{'Content-Type':'text/plain'},
       body:JSON.stringify({sheet,action:'save',data})
     });
-    const text=await r.text();
-    console.log('gasSave',sheet,text.slice(0,100));
+    const t=await r.text();
+    console.log('gasSave ok:',sheet,t.slice(0,80));
   }catch(e){
-    console.error('gasSave error:',e);
+    // Fallback: dùng JSONP GET với data encode (giới hạn size)
+    console.warn('gasSave fallback JSONP:',sheet);
+    const encoded=encodeURIComponent(JSON.stringify(data));
+    if(encoded.length<2000){
+      const cb='sv_'+Date.now();
+      window[cb]=(r)=>{delete window[cb];console.log('gasSave jsonp:',r);};
+      const s=document.createElement('script');
+      s.src=`${GAS_URL}?action=save&sheet=${encodeURIComponent(sheet)}&data=${encoded}&callback=${cb}`;
+      document.head.appendChild(s);
+    }
   }
 }
 function showLoading(msg){
